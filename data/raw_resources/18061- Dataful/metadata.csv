@@ -1,0 +1,10 @@
+organisation,Reserve Bank of India
+sectors,"Finance, Banking"
+updated_frequency,Monthly
+granularity,"Year, Month, Payment System"
+time_saved,3 hours
+source,"Reserve Bank of India ", " National Payments Corporation of India"
+source_link,"https://rbi.org.in/Scripts/NEFTView.aspx ", " https://www.npci.org.in/"
+time_period,"2008 to 2026"
+units,"volume in millions, value in rupees crore"
+citation,"Reserve Bank of India. Digital Payments Master Data: Year- and Month-wise Volume and Value of transactions done through Mobile, RTGS, IMPS, UPI, BHIM, NEFT, Bharat Bill Pay and Internet Banking [Data set]. Dataful. https://dataful.in/datasets/18061/18061"
