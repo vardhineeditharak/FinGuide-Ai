@@ -125,7 +125,75 @@ function renderMetadata(bubble, sources, used_fallback) {
   }
 }
 
+let conversationHistory = [];
+
+function addFeedbackButtons(bubble, query, answer) {
+  const actions = document.createElement('div');
+  actions.className = 'feedback-actions';
+  
+  const label = document.createElement('span');
+  label.className = 'feedback-label';
+  label.textContent = 'Was this helpful?';
+  actions.appendChild(label);
+  
+  const upBtn = document.createElement('button');
+  upBtn.className = 'feedback-btn thumbs-up';
+  upBtn.innerHTML = `👍 Yes`;
+  
+  const downBtn = document.createElement('button');
+  downBtn.className = 'feedback-btn thumbs-down';
+  downBtn.innerHTML = `👎 No`;
+  
+  const handleFeedback = async (rating, btnSelected, btnOther) => {
+    btnSelected.classList.add('active');
+    btnOther.style.opacity = '0.4';
+    btnOther.disabled = true;
+    try {
+      await fetch('/api/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query, answer, rating })
+      });
+    } catch (e) {
+      console.error('Error submitting feedback:', e);
+    }
+  };
+  
+  upBtn.addEventListener('click', () => handleFeedback('up', upBtn, downBtn));
+  downBtn.addEventListener('click', () => handleFeedback('down', downBtn, upBtn));
+  
+  actions.appendChild(upBtn);
+  actions.appendChild(downBtn);
+  bubble.appendChild(actions);
+}
+
 async function sendMessage(text) {
+  // Proactive Scam-Keyword Alert Banner
+  const scamKeywords = ['otp', 'pin', 'password', 'cvv', 'card number', 'cyber fraud', 'phishing', 'fake call', 'lottery', 'scam', 'fraud'];
+  const isScamQuery = scamKeywords.some(kw => text.toLowerCase().includes(kw));
+
+  // Hide welcome bento on first query
+  if (welcomeContainer && welcomeContainer.style.display !== 'none') {
+    welcomeContainer.style.display = 'none';
+  }
+
+  if (isScamQuery) {
+    const alertDiv = document.createElement('div');
+    alertDiv.className = 'scam-alert-banner';
+    alertDiv.innerHTML = `
+      <span class="scam-alert-icon">🚨</span>
+      <div class="scam-alert-content">
+        <div class="scam-alert-title">Proactive Safety Warning</div>
+        <div class="scam-alert-text">
+          FinGuide-Ai detected details relating to credentials or scam behavior. 
+          <span class="scam-alert-highlight">Never share your OTP, password, or UPI PIN with anyone.</span> 
+          If you suspect fraud, dial the National Cyber Crime Helpline at <span class="scam-alert-highlight">1930</span> or visit cybercrime.gov.in immediately.
+        </div>
+      </div>
+    `;
+    chatWindow.appendChild(alertDiv);
+  }
+
   // Add user message
   addMessage(text, 'user');
   
@@ -148,7 +216,7 @@ async function sendMessage(text) {
     const res = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: text })
+      body: JSON.stringify({ message: text, history: conversationHistory })
     });
 
     if (!res.ok) {
@@ -192,6 +260,18 @@ async function sendMessage(text) {
         }
       }
     }
+
+    // Add conversation history
+    const finalBotAnswer = textContent.textContent;
+    conversationHistory.push({ role: 'user', content: text });
+    conversationHistory.push({ role: 'assistant', content: finalBotAnswer });
+    if (conversationHistory.length > 10) {
+      conversationHistory.shift();
+      conversationHistory.shift();
+    }
+
+    // Render feedback buttons
+    addFeedbackButtons(botBubble, text, finalBotAnswer);
 
   } catch (err) {
     removeTyping();
@@ -241,10 +321,15 @@ if (restartBtn) {
   restartBtn.addEventListener('click', () => {
     const msgs = chatWindow.querySelectorAll('.msg');
     msgs.forEach(m => m.remove());
+    // Also remove any scam alerts
+    const alerts = chatWindow.querySelectorAll('.scam-alert-banner');
+    alerts.forEach(a => a.remove());
+    
     if (welcomeContainer) {
       welcomeContainer.style.display = 'flex';
     }
     statusLine.textContent = '';
+    conversationHistory = [];
   });
 }
 

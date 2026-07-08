@@ -22,13 +22,14 @@ def chat():
     try:
         data = request.get_json(force=True)
         user_message = (data.get("message") or "").strip()
+        history = data.get("history") or []
 
         if not user_message:
             return jsonify({"error": "Empty message"}), 400
 
         def generate():
             try:
-                for event in answer_query_stream(user_message):
+                for event in answer_query_stream(user_message, history):
                     yield f"data: {json.dumps(event)}\n\n"
             except Exception as ex:
                 yield f"data: {json.dumps({'type': 'error', 'error': str(ex)})}\n\n"
@@ -40,6 +41,37 @@ def chat():
         return jsonify({
             "error": f"Internal error: {type(e).__name__}: {str(e)}"
         }), 500
+
+
+@app.route("/api/feedback", methods=["POST"])
+def feedback():
+    try:
+        data = request.get_json(force=True)
+        query = data.get("query")
+        answer = data.get("answer")
+        rating = data.get("rating")
+
+        if not (query and answer and rating):
+            return jsonify({"error": "Missing required fields"}), 400
+
+        if rating not in ["up", "down"]:
+            return jsonify({"error": "Invalid rating"}), 400
+
+        import sqlite3
+        from rag_pipeline import DB_PATH
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO feedback (query, answer, rating) VALUES (?, ?, ?);",
+            (query, answer, rating)
+        )
+        conn.commit()
+        conn.close()
+
+        return jsonify({"status": "success"}), 200
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
 
 
 if __name__ == "__main__":

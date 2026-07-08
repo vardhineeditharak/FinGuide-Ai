@@ -24,16 +24,47 @@ CHUNK_OVERLAP = 100    # overlap between chunks to preserve context
 
 
 def chunk_text(text, chunk_size=CHUNK_SIZE, overlap=CHUNK_OVERLAP):
-    """Simple sliding-window chunker."""
+    """Paragraph-aware chunker that groups paragraphs to preserve structure."""
+    paragraphs = text.split("\n\n")
     chunks = []
-    start = 0
-    text_len = len(text)
-    while start < text_len:
-        end = min(start + chunk_size, text_len)
-        chunk = text[start:end].strip()
-        if chunk:
-            chunks.append(chunk)
-        start += chunk_size - overlap
+    current_chunk = []
+    current_len = 0
+    
+    for para in paragraphs:
+        para = para.strip()
+        if not para:
+            continue
+        
+        para_len = len(para)
+        # If a single paragraph is larger than chunk_size, split it
+        if para_len > chunk_size:
+            if current_chunk:
+                chunks.append("\n\n".join(current_chunk))
+                current_chunk = []
+                current_len = 0
+            
+            start = 0
+            while start < para_len:
+                end = min(start + chunk_size, para_len)
+                chunks.append(para[start:end].strip())
+                start += chunk_size - overlap
+            continue
+        
+        if current_len + para_len + (2 if current_chunk else 0) > chunk_size:
+            chunks.append("\n\n".join(current_chunk))
+            if overlap > 0 and len(current_chunk) > 1 and len(current_chunk[-1]) < overlap:
+                current_chunk = [current_chunk[-1], para]
+                current_len = len(current_chunk[0]) + 2 + para_len
+            else:
+                current_chunk = [para]
+                current_len = para_len
+        else:
+            current_chunk.append(para)
+            current_len += para_len + (2 if len(current_chunk) > 1 else 0)
+            
+    if current_chunk:
+        chunks.append("\n\n".join(current_chunk))
+        
     return chunks
 
 

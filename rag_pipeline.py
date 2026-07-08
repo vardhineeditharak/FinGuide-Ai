@@ -17,7 +17,7 @@ WATSONX_PROJECT_ID = os.getenv("WATSONX_PROJECT_ID")
 WATSONX_URL = os.getenv("WATSONX_URL", "https://us-south.ml.cloud.ibm.com")
 GRANITE_MODEL_ID = os.getenv("GRANITE_MODEL_ID", "ibm/granite-4-h-small")
 
-SYSTEM_PROMPT = """You are "Saarthi", a friendly digital financial literacy assistant for users in India.
+SYSTEM_PROMPT = """You are "FinGuide-Ai", a friendly digital financial literacy assistant for users in India.
 
 Rules you MUST follow:
 - Answer ONLY using the information given in the CONTEXT below. If the context does not contain the answer, say clearly: "I don't have enough verified information on that yet" and suggest the user check the relevant official source (RBI, NPCI, or their bank).
@@ -82,6 +82,16 @@ def retrieve(query, top_k=TOP_K):
         return []
 
     # Get query embedding using Watsonx cloud API
+    if not WATSONX_API_KEY or not WATSONX_PROJECT_ID:
+        print("[watsonx warning] Credentials not configured. Demo mode: returning static chunks.")
+        chunks = []
+        for r in records[:top_k]:
+            chunks.append({
+                "text": r["text"],
+                "source": r["source"]
+            })
+        return chunks
+
     emb_client = _get_embeddings_client()
     query_vector = emb_client.embed_query(query)
     
@@ -109,18 +119,31 @@ def retrieve(query, top_k=TOP_K):
     return chunks
 
 
-def build_prompt(query, chunks):
+def build_prompt(query, chunks, history=None):
     context_str = "\n\n".join(
         f"[Source: {c['source']}]\n{c['text']}" for c in chunks
     )
+    
+    history_str = ""
+    if history:
+        history_lines = []
+        for turn in history:
+            role = turn.get("role", "user")
+            content = turn.get("content", "")
+            if role == "user":
+                history_lines.append(f"User: {content}")
+            elif role == "assistant":
+                history_lines.append(f"Assistant: {content}")
+        history_str = "\n".join(history_lines) + "\n"
+
     prompt = f"""{SYSTEM_PROMPT}
 
 CONTEXT:
 {context_str}
 
-USER QUESTION: {query}
-
-ANSWER:"""
+CONVERSATION HISTORY:
+{history_str}User: {query}
+Assistant:"""
     return prompt
 
 
@@ -190,16 +213,16 @@ def fallback_answer(chunks):
                 "Please check rbi.org.in or npci.org.in for official guidance.")
     bullet_points = "\n".join(f"- {c['text'][:220]}..." for c in chunks[:2])
     return (
-        "⚠️ Demo mode (watsonx.ai Granite not connected yet). "
+        "[Demo Mode] (watsonx.ai Granite not connected yet). "
         "Showing raw retrieved context instead of a generated answer:\n\n"
         f"{bullet_points}\n\n"
         "Add your WATSONX_API_KEY and WATSONX_PROJECT_ID in .env to get full AI-generated answers."
     )
 
 
-def answer_query(query):
+def answer_query(query, history=None):
     chunks = retrieve(query)
-    prompt = build_prompt(query, chunks)
+    prompt = build_prompt(query, chunks, history)
     generated = call_granite(prompt)
     if generated is None:
         answer = fallback_answer(chunks)
@@ -216,10 +239,10 @@ def answer_query(query):
     }
 
 
-def answer_query_stream(query):
+def answer_query_stream(query, history=None):
     """Retrieves relevant sources, builds prompt, and yields tokens as Python dicts."""
     chunks = retrieve(query)
-    prompt = build_prompt(query, chunks)
+    prompt = build_prompt(query, chunks, history)
     sources = sorted(set(c["source"] for c in chunks))
 
     stream = call_granite_stream(prompt)
