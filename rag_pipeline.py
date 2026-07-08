@@ -1,23 +1,22 @@
 """
 rag_pipeline.py
-Core RAG logic:
- 1. Embed the user query and retrieve top-k relevant chunks from Chroma.
- 2. Build a grounded prompt with those chunks + safety instructions.
- 3. Call IBM watsonx.ai Granite model to generate the final answer.
-
-If watsonx credentials are missing or invalid, falls back to a clearly-labeled
-"context-only" response so the app still runs end-to-end for demo purposes.
+Core RAG logic optimized for serverless deployment:
+ 1. Embed the user query using the Watsonx.ai cloud embedding API (all-minilm-l6-v2).
+ 2. Retrieve top-k relevant chunks from our lightweight SQLite vector store using pure Python cosine similarity.
+ 3. Build a grounded prompt with those chunks + safety instructions.
+ 4. Call IBM watsonx.ai Granite model to generate the final answer.
 """
 
 import os
-import chromadb
-from chromadb.utils import embedding_functions
+import sqlite3
+import struct
 from dotenv import load_dotenv
+from ibm_watsonx_ai import Credentials
+from ibm_watsonx_ai.foundation_models.embeddings import Embeddings
 
 load_dotenv()
 
-DB_DIR = os.path.join(os.path.dirname(__file__), "vectorstore")
-COLLECTION_NAME = "fin_literacy_kb"
+DB_PATH = os.path.join(os.path.dirname(__file__), "vectorstore", "embeddings.db")
 TOP_K = 4
 
 WATSONX_API_KEY = os.getenv("WATSONX_API_KEY")
@@ -36,31 +35,84 @@ Rules you MUST follow:
 - If relevant, mention which source/topic the info is based on (e.g., "Based on NPCI/RBI guidance...").
 """
 
+_cached_records = None
+_embeddings_client = None
 
-_embed_fn = None
-_collection = None
 
-
-def _get_collection():
-    global _embed_fn, _collection
-    if _collection is None:
-        _embed_fn = embedding_functions.SentenceTransformerEmbeddingFunction(
-            model_name="all-MiniLM-L6-v2",
-            device="cpu"
+def _get_embeddings_client():
+    global _embeddings_client
+    if _embeddings_client is None:
+        credentials = Credentials(url=WATSONX_URL, api_key=WATSONX_API_KEY)
+        _embeddings_client = Embeddings(
+            model_id="sentence-transformers/all-minilm-l6-v2",
+            credentials=credentials,
+            project_id=WATSONX_PROJECT_ID
         )
-        client = chromadb.PersistentClient(path=DB_DIR)
-        _collection = client.get_collection(name=COLLECTION_NAME, embedding_function=_embed_fn)
-    return _collection
+    return _embeddings_client
+
+
+def _get_records():
+    global _cached_records
+    if _cached_records is None:
+        if not os.path.exists(DB_PATH):
+            return []
+        
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, document, source, topic, embedding FROM document_embeddings;")
+        rows = cursor.fetchall()
+        conn.close()
+
+        records = []
+        for r_id, doc, src, topic, emb_blob in rows:
+            # Unpack the binary blob into a float list
+            dim = len(emb_blob) // 4
+            emb = list(struct.unpack(f'{dim}f', emb_blob))
+            
+            # Calculate magnitude for cosine similarity
+            mag = sum(x*x for x in emb) ** 0.5
+            records.append({
+                "id": r_id,
+                "text": doc,
+                "source": src,
+                "topic": topic,
+                "embedding": emb,
+                "magnitude": mag
+            })
+        _cached_records = records
+    return _cached_records
 
 
 def retrieve(query, top_k=TOP_K):
-    collection = _get_collection()
-    results = collection.query(query_texts=[query], n_results=top_k)
+    records = _get_records()
+    if not records:
+        return []
+
+    # Get query embedding using Watsonx cloud API
+    emb_client = _get_embeddings_client()
+    query_vector = emb_client.embed_query(query)
+    
+    q_mag = sum(x*x for x in query_vector) ** 0.5
+    if q_mag == 0:
+        return []
+
+    # Compute cosine similarity
+    scores = []
+    for r in records:
+        dot_product = sum(x * y for x, y in zip(query_vector, r["embedding"]))
+        denom = q_mag * r["magnitude"]
+        score = dot_product / denom if denom > 0 else 0.0
+        scores.append((score, r))
+
+    # Sort by score descending and return top_k
+    scores.sort(key=lambda val: val[0], reverse=True)
+    
     chunks = []
-    docs = results.get("documents", [[]])[0]
-    metas = results.get("metadatas", [[]])[0]
-    for text, meta in zip(docs, metas):
-        chunks.append({"text": text, "source": meta.get("source", "unknown")})
+    for score, r in scores[:top_k]:
+        chunks.append({
+            "text": r["text"],
+            "source": r["source"]
+        })
     return chunks
 
 
@@ -140,3 +192,4 @@ def answer_query(query):
         "sources": sources,
         "used_fallback": used_fallback,
     }
+
