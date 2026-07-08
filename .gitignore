@@ -1,6 +1,7 @@
 .env
 __pycache__/
 node_modules/
-vectorstore/
+# Keep SQLite database committed for serverless read-only retrieval
+!vectorstore/embeddings.db
 .agents/
 skills-lock.json
