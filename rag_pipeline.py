@@ -10,7 +10,7 @@ from ibm_watsonx_ai.foundation_models.embeddings import Embeddings
 load_dotenv()
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "vectorstore", "embeddings.db")
-TOP_K = 4
+TOP_K = 3
 
 WATSONX_API_KEY = os.getenv("WATSONX_API_KEY")
 WATSONX_PROJECT_ID = os.getenv("WATSONX_PROJECT_ID")
