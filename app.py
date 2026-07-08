@@ -1,9 +1,10 @@
 import os
 import traceback
-from flask import Flask, request, jsonify, render_template
+import json
+from flask import Flask, request, jsonify, render_template, Response
 from dotenv import load_dotenv
 
-from rag_pipeline import answer_query
+from rag_pipeline import answer_query_stream
 
 load_dotenv()
 
@@ -25,13 +26,14 @@ def chat():
         if not user_message:
             return jsonify({"error": "Empty message"}), 400
 
-        result = answer_query(user_message)
+        def generate():
+            try:
+                for event in answer_query_stream(user_message):
+                    yield f"data: {json.dumps(event)}\n\n"
+            except Exception as ex:
+                yield f"data: {json.dumps({'type': 'error', 'error': str(ex)})}\n\n"
 
-        return jsonify({
-            "answer": result["answer"],
-            "sources": result["sources"],
-            "demo_mode": result["used_fallback"],
-        })
+        return Response(generate(), mimetype="text/event-stream")
 
     except Exception as e:
         traceback.print_exc()
@@ -43,3 +45,4 @@ def chat():
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=True)
+

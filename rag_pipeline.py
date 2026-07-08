@@ -1,15 +1,8 @@
-"""
-rag_pipeline.py
-Core RAG logic optimized for serverless deployment:
- 1. Embed the user query using the Watsonx.ai cloud embedding API (all-minilm-l6-v2).
- 2. Retrieve top-k relevant chunks from our lightweight SQLite vector store using pure Python cosine similarity.
- 3. Build a grounded prompt with those chunks + safety instructions.
- 4. Call IBM watsonx.ai Granite model to generate the final answer.
-"""
-
 import os
 import sqlite3
 import struct
+import json
+import time
 from dotenv import load_dotenv
 from ibm_watsonx_ai import Credentials
 from ibm_watsonx_ai.foundation_models.embeddings import Embeddings
@@ -161,6 +154,35 @@ def call_granite(prompt):
         return None
 
 
+def call_granite_stream(prompt):
+    """Calls IBM watsonx.ai Granite model and returns a generator stream."""
+    if not (WATSONX_API_KEY and WATSONX_PROJECT_ID):
+        return None
+
+    try:
+        from ibm_watsonx_ai import Credentials
+        from ibm_watsonx_ai.foundation_models import ModelInference
+
+        credentials = Credentials(url=WATSONX_URL, api_key=WATSONX_API_KEY)
+
+        model = ModelInference(
+            model_id=GRANITE_MODEL_ID,
+            credentials=credentials,
+            project_id=WATSONX_PROJECT_ID,
+            params={
+                "decoding_method": "greedy",
+                "max_new_tokens": 350,
+                "min_new_tokens": 20,
+                "repetition_penalty": 1.1,
+            },
+        )
+
+        return model.generate_text_stream(prompt=prompt)
+    except Exception as e:
+        print(f"[watsonx stream error] {type(e).__name__}: {e}")
+        return None
+
+
 def fallback_answer(chunks):
     """Used only when watsonx credentials are not configured yet."""
     if not chunks:
@@ -192,4 +214,29 @@ def answer_query(query):
         "sources": sources,
         "used_fallback": used_fallback,
     }
+
+
+def answer_query_stream(query):
+    """Retrieves relevant sources, builds prompt, and yields tokens as Python dicts."""
+    chunks = retrieve(query)
+    prompt = build_prompt(query, chunks)
+    sources = sorted(set(c["source"] for c in chunks))
+
+    stream = call_granite_stream(prompt)
+    if stream is None:
+        # Fallback stream
+        fallback = fallback_answer(chunks)
+        yield {"type": "metadata", "sources": sources, "used_fallback": True}
+        # Simulate real-time word-by-word streaming for smooth typing feel
+        for word in fallback.split(" "):
+            yield {"type": "token", "text": word + " "}
+            time.sleep(0.03)
+    else:
+        yield {"type": "metadata", "sources": sources, "used_fallback": False}
+        try:
+            for chunk in stream:
+                yield {"type": "token", "text": chunk}
+        except Exception as e:
+            yield {"type": "error", "error": str(e)}
+
 

@@ -92,12 +92,57 @@ function removeTyping() {
   if (el) el.remove();
 }
 
+function renderMetadata(bubble, sources, used_fallback) {
+  if (sources && sources.length) {
+    const src = document.createElement('div');
+    src.className = 'sources-line';
+    
+    const label = document.createElement('div');
+    label.className = 'source-label';
+    label.textContent = 'Grounded Sources';
+    src.appendChild(label);
+
+    const container = document.createElement('div');
+    container.className = 'source-chips-container';
+    sources.forEach(s => {
+      const chip = document.createElement('span');
+      chip.className = 'source-chip';
+      chip.textContent = getSourceDisplayName(s);
+      container.appendChild(chip);
+    });
+    src.appendChild(container);
+    bubble.appendChild(src);
+  }
+  
+  if (used_fallback) {
+    const flag = document.createElement('div');
+    flag.className = 'demo-flag';
+    flag.innerHTML = `
+      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+      <span>Demo mode — connect watsonx.ai Granite for full AI answers</span>
+    `;
+    bubble.appendChild(flag);
+  }
+}
+
 async function sendMessage(text) {
+  // Add user message
   addMessage(text, 'user');
+  
   sendBtn.disabled = true;
   chatInput.disabled = true;
   statusLine.textContent = 'FinGuide-Ai is thinking...';
   showTyping();
+
+  // Create Bot Message container (hidden initially)
+  const botRow = document.createElement('div');
+  botRow.className = 'msg msg-bot';
+  const botBubble = document.createElement('div');
+  botBubble.className = 'msg-bubble';
+  
+  const textContent = document.createElement('span');
+  botBubble.appendChild(textContent);
+  botRow.appendChild(botBubble);
 
   try {
     const res = await fetch('/api/chat', {
@@ -107,31 +152,63 @@ async function sendMessage(text) {
     });
 
     if (!res.ok) {
-      const errData = await res.json().catch(() => ({}));
-      throw new Error(errData.error || `Server returned ${res.status}`);
+      throw new Error(`Server returned status ${res.status}`);
     }
 
-    const data = await res.json();
     removeTyping();
+    chatWindow.appendChild(botRow);
+    chatWindow.scrollTop = chatWindow.scrollHeight;
 
-    if (data.error) {
-      addMessage('Sorry, something went wrong: ' + data.error, 'bot');
-    } else {
-      addMessage(data.answer, 'bot', { sources: data.sources, demo_mode: data.demo_mode });
-      statusLine.textContent = '';
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder('utf-8');
+    let buffer = '';
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      
+      // Save last incomplete line back to buffer
+      buffer = lines.pop();
+
+      for (const line of lines) {
+        const cleaned = line.trim();
+        if (!cleaned || !cleaned.startsWith('data: ')) continue;
+        
+        try {
+          const event = JSON.parse(cleaned.substring(6));
+          if (event.type === 'metadata') {
+            renderMetadata(botBubble, event.sources, event.used_fallback);
+          } else if (event.type === 'token') {
+            textContent.textContent += event.text;
+            chatWindow.scrollTop = chatWindow.scrollHeight;
+          } else if (event.type === 'error') {
+            textContent.textContent = 'Error: ' + event.error;
+          }
+        } catch (e) {
+          console.error('Failed to parse SSE:', cleaned, e);
+        }
+      }
     }
+
   } catch (err) {
     removeTyping();
-    if (err.message.includes('Failed to fetch') || err.message.includes('NetworkError')) {
-      addMessage('Network error — is the server running?', 'bot');
-    } else {
-      addMessage('Error: ' + err.message, 'bot');
+    if (!botRow.parentNode) {
+      chatWindow.appendChild(botRow);
     }
-    statusLine.textContent = '';
+    if (err.message.includes('Failed to fetch') || err.message.includes('NetworkError')) {
+      textContent.textContent = 'Network error — is the server running?';
+    } else {
+      textContent.textContent = 'Error: ' + err.message;
+    }
   } finally {
+    statusLine.textContent = '';
     sendBtn.disabled = false;
     chatInput.disabled = false;
     chatInput.focus();
+    chatWindow.scrollTop = chatWindow.scrollHeight;
   }
 }
 
@@ -170,3 +247,4 @@ if (restartBtn) {
     statusLine.textContent = '';
   });
 }
+
