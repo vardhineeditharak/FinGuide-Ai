@@ -1,0 +1,43 @@
+{
+  "name": "FinGuide-Ai",
+  "description": "A RAG-powered assistant for digital financial literacy, powered by IBM watsonx.ai Granite.",
+  "repository": "https://github.com/vardhineeditharak/FinGuide-Ai",
+  "keywords": [
+    "python",
+    "flask",
+    "watsonx",
+    "ibm",
+    "rag",
+    "financial-literacy"
+  ],
+  "env": {
+    "FLASK_SECRET_KEY": {
+      "description": "A secret key for Flask session security.",
+      "generator": "secret"
+    },
+    "WATSONX_API_KEY": {
+      "description": "Your IBM Cloud API Key.",
+      "required": true
+    },
+    "WATSONX_PROJECT_ID": {
+      "description": "Your watsonx.ai Project ID.",
+      "required": true
+    },
+    "WATSONX_URL": {
+      "description": "The IBM Watson Machine Learning service URL region endpoint.",
+      "value": "https://us-south.ml.cloud.ibm.com"
+    },
+    "GRANITE_MODEL_ID": {
+      "description": "The IBM watsonx Granite model ID.",
+      "value": "ibm/granite-3-8b-instruct"
+    }
+  },
+  "scripts": {
+    "postdeploy": "python ingest.py && python migrate_db.py && python setup_feedback_db.py"
+  },
+  "buildpacks": [
+    {
+      "url": "heroku/python"
+    }
+  ]
+}
